@@ -142,6 +142,37 @@ const renderTextState = (el, cls, text) => { el.className = cls; el.textContent 
 const renderEmptyState = (el, face, text) => el.innerHTML = `<div class="empty-list-placeholder empty-state"><div class="empty-face">${face}</div><div class="empty-text">${text}</div></div>`;
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
+// instead of exiting the whole webui. Every modal opens on top of the
+// main screen calls pushOverlay() when it opens
+// and closeOverlay() when it closes for any reason
+// (Cancel, Close button, back tap, or a successful action)
+const overlayStack = [];
+const OVERLAY_CLOSERS = {};
+let suppressNextPopstate = false;
+
+function pushOverlay(id) {
+    overlayStack.push(id);
+    history.pushState({ nmOverlay: id }, '');
+}
+
+function closeOverlay(id, onClose) {
+    onClose();
+    const idx = overlayStack.lastIndexOf(id);
+    if (idx === -1) return;
+    overlayStack.splice(idx, 1);
+    if (history.state && history.state.nmOverlay === id) {
+        suppressNextPopstate = true;
+        history.back();
+    }
+}
+
+window.addEventListener('popstate', () => {
+    if (suppressNextPopstate) { suppressNextPopstate = false; return; }
+    const id = overlayStack.pop();
+    const closer = id && OVERLAY_CLOSERS[id];
+    if (closer) closer();
+});
+
 // Icons
 customElements.define('md-icon', class extends HTMLElement {});
 const ICON_PATHS = {
@@ -683,13 +714,15 @@ function openAppSelector() {
     content.style.setProperty('--app-selector-height', `${Math.round(viewportHeight * 0.9)}px`);
     content.classList.add('viewport-locked');
     modal.classList.add('active');
+    OVERLAY_CLOSERS['app-selector'] = closeAppSelector;
+    pushOverlay('app-selector');
     if (listObserver) listObserver.disconnect();
     document.getElementById('filter-menu').classList.remove('active'); 
     searchInput.value = '';
     if (sysSwitch) sysSwitch.checked = showSystemApps;
 
     document.getElementById('btn-close-modal').onclick = () => { 
-        closeAppSelector();
+        closeOverlay('app-selector', closeAppSelector);
     };
 
     container.innerHTML = `<div class="loading-spinner">${translate('loading') || 'Loading apps...'}</div>`;
@@ -1051,7 +1084,7 @@ function initDelegationAndAttach() {
         } else {
             item.dataset.busy = 'true';
             const { uid, label, pkg } = item.dataset;
-            closeAppSelector();
+            closeOverlay('app-selector', closeAppSelector);
             setTimeout(async () => { await addExclusion(uid, label, pkg); }, 50);
         }
     });
@@ -1060,7 +1093,7 @@ function initDelegationAndAttach() {
         if (isMultiSelectMode) {
             const appsToSave = new Map(selectedAppsMap);
             exitMultiSelectMode();
-            closeAppSelector();
+            closeOverlay('app-selector', closeAppSelector);
             if (appsToSave.size > 0) {
                 try {
                     const currentData = await readExclusionsJson();
@@ -1084,6 +1117,7 @@ function initDelegationAndAttach() {
                 const btnCancel = document.getElementById('btn-cancel-uid');
                 const btnAdd = document.getElementById('btn-confirm-uid');
                 modalDialog.classList.add('active');
+                pushOverlay('uid-input');
                 input.value = '';
                 setTimeout(() => input.focus(), 150);
                 const cleanup = () => {
@@ -1092,15 +1126,18 @@ function initDelegationAndAttach() {
                     btnCancel.onclick = null;
                     btnAdd.onclick = null;
                     modalDialog.onclick = null;
+                    delete OVERLAY_CLOSERS['uid-input'];
                 };
-                btnCancel.onclick = () => { cleanup(); resolve(null); };
-                btnAdd.onclick = () => { cleanup(); resolve(input.value); };
-                modalDialog.onclick = (e) => {  if (e.target === modalDialog) { cleanup(); resolve(null); }  };
+                // Physical/system Back closes this dialog like Cancel, without leaving the webui
+                OVERLAY_CLOSERS['uid-input'] = () => { cleanup(); resolve(null); };
+                btnCancel.onclick = () => { closeOverlay('uid-input', cleanup); resolve(null); };
+                btnAdd.onclick = () => { closeOverlay('uid-input', cleanup); resolve(input.value); };
+                modalDialog.onclick = (e) => {  if (e.target === modalDialog) { closeOverlay('uid-input', cleanup); resolve(null); }  };
             });
 
             const manualUid = await getManualUid();
             if (manualUid && /^\d+$/.test(manualUid.trim())) {
-                closeAppSelector();
+                closeOverlay('app-selector', closeAppSelector);
                 await addExclusion(manualUid.trim(), `UID: ${manualUid.trim()}`, 'System/Manual');
             } else if (manualUid) {
                 showToast(translate('invalid_uid') || 'Invalid UID format');
@@ -1110,7 +1147,7 @@ function initDelegationAndAttach() {
 
     document.getElementById('app-selector-modal')?.addEventListener('click', (e) => {
         if (e.target === e.currentTarget) {
-            closeAppSelector();
+            closeOverlay('app-selector', closeAppSelector);
             exitMultiSelectMode();
         }
     });
