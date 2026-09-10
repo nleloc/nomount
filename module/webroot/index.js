@@ -560,11 +560,14 @@ async function loadExclusions() {
             const app = appsMap.get(uid);
             const label = app ? app.label : `UID: ${uid}`;
             const pkg = app ? app.pkg : 'System/Unknown';
+            const userId = Math.floor(Number(uid) / 100000);
+            const userBadge = userId !== 0 ? `<span class="system-chip">User ${userId}</span>` : '';
+            // reusing system-chip
             return `
                 <div class="card setting-item" data-uid="${uid}" data-label="${label}">
                     <div class="exclusion-app">
                         <img src="ksu://icon/${pkg}" class="app-icon-img" onerror="this.src='${APP_ICON_FALLBACK}'" />
-                        <div class="setting-text"><h3>${label}</h3><p>${pkg}</p></div>
+                        <div class="setting-text"><h3>${label} ${userBadge}</h3><p>${pkg}</p></div>
                     </div>
                     <md-icon-button class="btn-delete" aria-label="Remove exclusion">
                         <md-icon data-icon="delete" data-icon-variant="outline" aria-hidden="true">
@@ -585,6 +588,28 @@ async function loadExclusions() {
         renderTextState(listContainer, 'error-message', translate('error_loading_exclusions'));
         showToast(translate('error_loading_exclusions'));
     }
+}
+
+// uses pm to resolve app UID
+async function getRealUidEntries() {
+    // entries: packageName -> [{ uid, userId }, ...]
+    const entries = new Map();
+
+    const { stdout: usersOut } = await exec('pm list users 2>/dev/null');
+    let userIds = [...usersOut.matchAll(/UserInfo\{(\d+):/g)].map(m => m[1]);
+    if (userIds.length === 0) userIds = ['0'];
+
+    for (const userId of userIds) {
+        const { stdout } = await exec(`pm list packages -U --user ${userId} 2>/dev/null`);
+        for (const line of stdout.split('\n')) {
+            const m = line.match(/^package:(\S+)\s+uid:(\d+)/);
+            if (!m) continue;
+            const [, pkgName, uid] = m;
+            if (!entries.has(pkgName)) entries.set(pkgName, []);
+            entries.get(pkgName).push({ uid, userId });
+        }
+    }
+    return entries;
 }
 
 async function ensureAppsCache(force = false) {
@@ -627,20 +652,56 @@ async function ensureAppsCache(force = false) {
             if (!pkgsRaw || pkgsRaw === '[]' || pkgsRaw === '') return;
             const pkgs = JSON.parse(pkgsRaw);
             const chunkSize = 200;
-            const tempCache = [];
+            const metaByPkg = new Map();
 
             for (let i = 0; i < pkgs.length; i += chunkSize) {
                 const chunkInfo = ksu.getPackagesInfo(JSON.stringify(pkgs.slice(i, i + chunkSize)));
-                if (chunkInfo) tempCache.push(...JSON.parse(chunkInfo));
-                await delay(15); 
+                if (chunkInfo) {
+                    for (const app of JSON.parse(chunkInfo)) metaByPkg.set(app.packageName, app);
+                }
+                await delay(15);
+            }
+
+            // uses pm per-user uid, independent from ksu's api
+            const uidEntries = await getRealUidEntries();
+
+            const tempCache = [];
+            for (const pkgName of pkgs) {
+                const meta = metaByPkg.get(pkgName);
+                const label = (meta && meta.appLabel) || pkgName;
+                const isSystem = Boolean(meta && meta.isSystem);
+                const instances = uidEntries.get(pkgName);
+
+                if (!instances || instances.length === 0) {
+                    // edge case, fall back to ksu's value so the exclusion menu isn't blank
+                    if (meta) tempCache.push({
+                        uid: String(meta.uid), packageName: pkgName,
+                        appLabel: label, isSystem, isClone: false
+                    });
+                    continue;
+                }
+
+                for (const { uid, userId } of instances) {
+                    const isClone = userId !== '0';
+                    tempCache.push({
+                        uid: String(uid),
+                        packageName: pkgName,
+                        appLabel: label,
+                        isSystem,
+                        isClone,
+                        userId
+                    });
+                }
             }
 
             allAppsCache = tempCache.map(app => ({
-                uid: String(app.uid),
+                uid: app.uid,
                 packageName: app.packageName,
-                appLabel: app.appLabel || app.packageName,
-                isSystem: Boolean(app.isSystem),
-                _search: (app.appLabel || app.packageName).toLowerCase() + app.packageName.toLowerCase()
+                appLabel: app.appLabel,
+                isSystem: app.isSystem,
+                isClone: app.isClone,
+                userId: app.userId,
+                _search: app.appLabel.toLowerCase() + app.packageName.toLowerCase()
             })).sort((a, b) => a.appLabel < b.appLabel ? -1 : (a.appLabel > b.appLabel ? 1 : 0));
 
             try {
@@ -740,7 +801,7 @@ function renderNextAppBatch() {
         <div class="app-item segment-card ${isSel}" data-uid="${app.uid}" data-label="${app.appLabel}" data-pkg="${app.packageName}">
             <img src="ksu://icon/${app.packageName}" class="app-icon-img" loading="lazy" onerror="this.src='${APP_ICON_FALLBACK}'" />
             <div class="app-details"><div class="app-name">${app.appLabel}</div><div class="app-pkg">${app.packageName}</div></div>
-            <div class="app-meta"><div class="uid-label">UID: ${app.uid}</div>${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}</div>
+            <div class="app-meta"><div class="uid-label">UID: ${app.uid}</div>${app.isSystem ? '<span class="system-chip">SYS</span>' : ''}${app.isClone ? `<span class="system-chip">User ${app.userId}</span>` : ''}</div>
         </div>
         `;
     }).join('');
