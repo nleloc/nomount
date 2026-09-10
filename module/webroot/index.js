@@ -1205,6 +1205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     viewLoadState['view-home'] = true;
     loadHome();
     document.body.classList.remove('loading');
+    ensureAppsCache(true);
 
     try {
         if (!viewLoadState['view-modules']) loadModules();
