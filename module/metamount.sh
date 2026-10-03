@@ -3,69 +3,39 @@
 MODDIR=${0%/*}
 LOADER="$MODDIR/bin/nm"
 MODULES_DIR="/data/adb/modules"
-NOMOUNT_DATA="/data/adb/nomount"
-LOG_FILE="$NOMOUNT_DATA/nomount.log"
-BOOT_SEMAPHORE="$NOMOUNT_DATA/.booting"
+BOOT_SEMAPHORE="$MODDIR/.mounting"
+DRIVER_FAIL_SEMAPHORE="$MODDIR/driver_load_failed"
 TARGET_PARTITIONS="system system_ext vendor odm product apex oem optics prism
                     mi_ext my_bigball my_carrier my_company my_engineering my_heytap
                     my_manifest my_preload my_product my_region my_reserve my_stock"
 PROP_FILE="$MODDIR/module.prop"
 BASE_DESC="A metamodule that replaces OverlayFS/MagicMount with VFS path redirection."
 
-load_ko() {
-    local root_cmd=""
-    if command -v ksud >/dev/null 2>&1 && ksud -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then root_cmd="ksud"
-    elif command -v apd >/dev/null 2>&1 && apd -h 2>&1 | grep -qE '(^|[[:space:]])insmod([[:space:]]|$)'; then root_cmd="apd"; fi
+# this currently does not have a log for `nm` binary
 
-    if [ -n "$root_cmd" ]; then
-        if "$root_cmd" insmod "$1" >> "$LOG_FILE" 2>&1 && "$LOADER" version >/dev/null 2>&1; then 
-            return 0
-        fi
-        echo "[WARN] $root_cmd insmod failed; falling back to lkmloader." >> "$LOG_FILE"
-        rmmod nomount 2>/dev/null
-    fi
+# calling logcat binary every single time needs to log..
+# don't over use it
+log_info()  { log -t NoMount -p i "$*"; } # info log
+log_warn()  { log -t NoMount -p w "$*"; } # warning
+log_err()   { log -t NoMount -p e "$*"; } # error
 
-    if ! { "$MODDIR/lkm/lkmloader" "$1" >> "$LOG_FILE" 2>&1 && "$LOADER" version >/dev/null 2>&1; }; then
-        echo "[FATAL] lkmloader failed; LKM hasn't been loaded." >> "$LOG_FILE"
-        return 1
-    fi
 
-    return 0
-}
-
-if [ ! -d "$NOMOUNT_DATA" ]; then
-    mkdir -p "$NOMOUNT_DATA"
+if [ -f "$DRIVER_FAIL_SEMAPHORE" ]; then
+    touch "$MODDIR/disable"
+    sed -i "s|^description=.*|description=[❌ Kernel not patched / LKM failed to load] \\\\n$BASE_DESC|" "$PROP_FILE"
+    rm -f "$DRIVER_FAIL_SEMAPHORE"
+    exit 1
 fi
 
-echo "=== NoMount Boot Log | Started: $(date) ===" > "$LOG_FILE"
-echo "Kernel Version: $(uname -r)" >> "$LOG_FILE"
-
 if [ -f "$BOOT_SEMAPHORE" ]; then
-    echo "[FATAL] Bootloop detected! NoMount caused a crash on the last boot." >> "$LOG_FILE"
-    echo "[INFO] Disabling NoMount for safety..." >> "$LOG_FILE"
+    log_err "Anti-Bootloop triggered! Your system crashed on last boot."
     touch "$MODDIR/disable"
-    sed -i "s|^description=.*|description=[🚨 DISABLED: Bootloop Prevented] \\\\n$BASE_DESC|" "$PROP_FILE"
+    sed -i "s|^description=.*|description=[🚨 Anti-Bootloop triggered] \\\\n$BASE_DESC|" "$PROP_FILE"
     rm -f "$BOOT_SEMAPHORE"
     exit 1
 fi
 
 touch "$BOOT_SEMAPHORE"
-
-echo "[INFO] Checking NoMount kernel support..." >> "$LOG_FILE"
-if "$LOADER" version > /dev/null 2>&1; then
-    echo "[INFO] Built-in Kernel support detected." >> "$LOG_FILE"
-else
-    echo "[INFO] Built-in not found. Attempting to load LKM..." >> "$LOG_FILE"
-    if [ ! -f "$MODDIR/lkm/nomount.ko" ] || ! load_ko "$MODDIR/lkm/nomount.ko" >> "$LOG_FILE" 2>&1; then
-        echo "[FATAL] NoMount Internal API is missing/unresponsive." >> "$LOG_FILE"
-        touch "$MODDIR/disable"
-        sed -i "s|^description=.*|description=[❌ ERROR: Kernel not patched or module failed to load] \\\\n$BASE_DESC|" "$PROP_FILE"
-        rm -f "$BOOT_SEMAPHORE"
-        exit 1
-    fi
-    echo "[INFO] LKM loaded and initialized correctly." >> "$LOG_FILE"
-fi
-echo "[OK] Internal API responding properly." >> "$LOG_FILE"
 
 for mod_path in "$MODULES_DIR"/*; do
     [ -d "$mod_path" ] || continue
@@ -116,8 +86,5 @@ echo "=== Injection Complete: $(date) ===" >> "$LOG_FILE"
 rm -f "$BOOT_SEMAPHORE"
 echo "[OK] Boot phase completed safely." >> "$LOG_FILE"
 sed -i "s|^description=.*|description=$BASE_DESC|" "$PROP_FILE"
-
-echo -e "\nCurrent files injected:" >> "$LOG_FILE"
-"$LOADER" rule list >> "$LOG_FILE"
 
 exit 0
