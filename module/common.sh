@@ -1,9 +1,10 @@
 #!/system/bin/sh
-# Shared helpers for NoMount post-fs-data.sh and metamount.sh
+# Shared functions for NoMount's scripts
 
 NOMOUNT_DATA="/data/adb/nomount"
 LOADER="$MODDIR/bin/nm"
 BOOT_SEMAPHORE="$NOMOUNT_DATA/.booting"
+DUMP_RULES_FLAG="$NOMOUNT_DATA/dump_rules"
 PROP_FILE="$MODDIR/module.prop"
 BASE_DESC="A metamodule that replaces OverlayFS/MagicMount with VFS path redirection."
 
@@ -114,4 +115,15 @@ add_rule_and_log() {
     if [ "$rc" -ne 0 ]; then
         klogerr "rule add $* failed rc=$rc: $(echo "$out" | head -n 3 | tr '\n' ' ' | cut -c1-300)"
     fi
+}
+
+dump_all_rules_logcat() {
+    local list
+    list=$("$LOADER" rule list 2>&1 | tr '\n' ';')
+    [ -n "$list" ] || list="(empty)"
+    log -t nomount -p i "rules dump start ($(printf '%s' "$list" | wc -c) bytes) $1"
+    printf '%s' "$list" | fold -w 3500 | while IFS= read -r chunk; do
+        log -t nomount -p i "$chunk"
+    done
+    log -t nomount -p i "rules dump end"
 }

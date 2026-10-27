@@ -153,7 +153,7 @@ const MOD_DIR = "/data/adb/modules";
 const NM_DATA = "/data/adb/nomount";
 const NM_BIN = "/data/adb/modules/nomount/bin/nm";
 const RULE_PATHS = `${MOD_DIR}/nomount/rule-paths.sh`;
-const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json` };
+const FILES = { disable: `${NM_DATA}/disable`, exclusions: `${NM_DATA}/.exclusion_list.json`, isolated: `${NM_DATA}/.block_isolated_uids`, theme: `${NM_DATA}/theme.json`, dump_rules: `${NM_DATA}/dump_rules` };
 const APP_ICON_FALLBACK = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzgwODA4MCI+PHBhdGggZD0iTTEyIDJDNi40OCAyIDIgNi40OCAyIDEyczQuNDggMTAgMTAgMTAgMTAtNC40OCAxMC0xMFMxNy41MiAyIDEyIDJ6bTAgMThjLTQuNDEgMC04LTMuNTktOC04czMuNTktOCA4LTggOCAzLjU5IDggOC0zLjU5IDgtOCA4eiIvPjwvc3ZnPg==";
 const viewLoadState = { 'view-home': false, 'view-modules': false, 'view-exclusions': false, 'view-options': false };
 
@@ -1155,11 +1155,15 @@ async function loadOptions() {
     if (!optionsInitialized) initOptionsUI();
 
     const swSafe = document.querySelector('#setting-safemode input');
+    const swDumpRules = document.querySelector('#settings-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
 
     if (swSafe)
         swSafe.checked = (await exec(`[ -f ${FILES.disable} ] && echo yes`)).stdout.includes('yes');
+
+    if (swDumpRules)
+        swDumpRules.checked = (await exec(`[ -f ${FILES.dump_rules} ] && echo yes`)).stdout.includes('yes');
 
     if (swIso && swIsoCard) {
         const safeModeCard = document.getElementById('setting-safemode').closest('.segment-card');
@@ -1343,6 +1347,7 @@ function initOptionsUI() {
     }
 
     const swSafe = document.querySelector('#setting-safemode input');
+    const swDumpRules = document.querySelector('#settings-dumprule input');
     const swIso = document.querySelector('#setting-isolated input');
     const swIsoCard = document.getElementById('setting-isolated-card');
     const btnClearRules = document.getElementById('btn-clear-rules-only');
@@ -1351,6 +1356,9 @@ function initOptionsUI() {
 
     if (swSafe)
         swSafe.onchange = e => exec(e.target.checked ? `touch ${FILES.disable}` : `rm ${FILES.disable}`);
+
+    if (swDumpRules)
+        swDumpRules.onchange = e => exec(e.target.checked ? `touch ${FILES.dump_rules}` : `rm ${FILES.dump_rules}`);
 
     if (swIso && swIsoCard) {
         swIso.onchange = async (e) => {
