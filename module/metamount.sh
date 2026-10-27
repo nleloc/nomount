@@ -63,8 +63,5 @@ done
 klog "Injection completed"
 sed -i "s|^description=.*|description=$BASE_DESC|" "$PROP_FILE"
 
-printf '\nCurrent files injected:\n' >> "$LOG_FILE"
-"$LOADER" rule list >> "$LOG_FILE"
-
 exec 6>&-
 exit 0
