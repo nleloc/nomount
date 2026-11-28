@@ -495,6 +495,13 @@ static int nm_error(const char *what, int error) {
     return 1;
 }
 
+static noinline void nm_warn_loop(const char *path) {
+    static const char prefix[] = "nm: skipping symlink loop: ";
+    write_strn(STDERR_FILENO, prefix, sizeof(prefix) - 1);
+    write_strn(STDERR_FILENO, path, strlen(path));
+    write_strn(STDERR_FILENO, "\n", 1);
+}
+
 static int nm_flush_rules(struct nm_payload *p) {
     if (!p->data_size) return 0;
     int error = nm_send_payload(p);
@@ -645,7 +652,7 @@ static int nm_read_module_name(const char *prop_path, char *name_out, size_t nam
 
 static int nm_dir_exists(const char *path) {
     struct stat st;
-    if (stat(path, &st)) return errno == ENOENT || errno == ENOTDIR ? 0 : -errno;
+    if (stat(path, &st)) return errno == ENOENT || errno == ENOTDIR || errno == ELOOP ? 0 : -errno;
     return S_ISDIR(st.st_mode);
 }
 
@@ -739,6 +746,10 @@ static int nm_walk_module(struct nm_walk *ctx, int parent_fd, const char *name,
         rc = nm_path_join(ctx->path + len, sizeof(ctx->path) - len, "", e->d_name);
         if (rc) break;
         rc = nm_walk_module(ctx, dirfd(d), e->d_name, e->d_type, &here);
+        if (rc == -ELOOP) {
+            nm_warn_loop(ctx->path);
+            rc = 0;
+        }
         ctx->path[len] = '\0';
         if (rc) break;
     }
